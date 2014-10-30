@@ -13,7 +13,8 @@ Depends on openssl: https://www.openssl.org
 Compile by merely running '''make''' in the sectsum directory
 
 ### Run
-The only argument is the object file, executable, or library file.
+The only required argument is the object file, executable, or library file.
+Run sectsum without arguments to get the help.
 
 ### Contact
 Matt Davis

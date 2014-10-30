@@ -13,9 +13,17 @@
     while(0)
 
 
+/* Flags for handling output and other user decidable things */
+#define FLAG_NONE 0
+#define FLAG_CSV  1
+
+
 static void usage(const char *execname)
 {
-    printf("Usage: %s <obj or exec>\n", execname);
+    printf("Usage: %s <obj or exec> [-c]\n"
+           "  <obj | exec | lib>: path to the ELF binary to examine\n"
+           "  -c                : CSV output\n",
+            execname);
     exit(EXIT_SUCCESS);
 }
 
@@ -46,13 +54,45 @@ static size_t safe_fread(void *buf, size_t sz, FILE *fp)
 #define E_SZ(_b, _s) ((_s==32) ? \
     sizeof(Elf32_##_b) : sizeof(Elf64_##_b))
 
-
-static void disp_sections(FILE *fp, const char *fname)
+                         
+/* Output a section in the desired format */
+static void print_sect(
+    int                  instance,
+    const char          *fname,
+    const char          *sect_name,
+    size_t               size,
+    const unsigned char *hash,
+    int                  flags)
 {
-    int i, j, n_sections, bits;
+    int i;
+
+    if (strlen(sect_name) == 0)
+      sect_name = "<none>";
+
+    if (flags & FLAG_CSV)
+      printf("%s, %s, %zu, ", fname, sect_name, size);
+    else /* Else: Normal output (not csv) */
+      printf("% 3d) %-20s", instance, sect_name);
+
+    /* Output the hash */
+    printf(" <0x");
+    for (i=0; i<160/8; ++i)
+      printf("%02x", hash[i]);
+    printf("> ");
+    
+    if (!(flags & FLAG_CSV))
+      printf("[%zu bytes]", size);
+
+    putc('\n', stdout);
+}
+
+
+static void disp_sections(FILE *fp, const char *fname, int flags)
+{
+    int i, n_sections, bits;
     void *hdr, *shdr;
     long here;
-    uint64_t strtbl_idx, shent_sz;
+    uint64_t strtbl_idx, shent_sz, sect_sz;
     char *strtbl, *name, ident[EI_NIDENT];
     unsigned char hash[32], *data;
     Elf32_Ehdr hdr32 = {{0}};
@@ -96,14 +136,19 @@ static void disp_sections(FILE *fp, const char *fname)
     fseek(fp, E(Shdr, sh_offset, bits, shdr), SEEK_SET);
     safe_fread(strtbl, E(Shdr, sh_size, bits, shdr), fp);
 
+    /* Header */
+    if (flags & FLAG_CSV)
+      printf("# Filename, Section Name, Size, SHA1 Hash\n");
+    else
+      printf("%s: %d sections:\n", fname, n_sections);
+
     /* For each section ... */
     fseek(fp, E(Ehdr, e_shoff, bits, hdr), SEEK_SET);
-    printf("%s: %d sections:\n", fname, n_sections);
     for (i=0; i<n_sections; ++i)
     {
         safe_fread(shdr, shent_sz, fp);
         name = strtbl + E(Shdr, sh_name, bits, shdr);
-        printf("% 3d) %-20s", i+1, name[0] ? name : "<none>");
+        sect_sz = (uint64_t)E(Shdr, sh_size, bits, shdr);
 
         /* Read the data */
         if (!(data = malloc(E(Shdr, sh_size, bits, shdr))))
@@ -113,12 +158,10 @@ static void disp_sections(FILE *fp, const char *fname)
         safe_fread(data, E(Shdr, sh_size, bits, shdr), fp);
         fseek(fp, here, SEEK_SET);
 
-        /* Calc the hash */
+        /* Calc the hash (160 bits) */
         SHA1(data, E(Shdr, sh_size, bits, shdr), hash);
-        printf(" <0x");
-        for (j=0; j<160/8; ++j)
-          printf("%02x", hash[j]);
-        printf("> [%d bytes]\n", (int)E(Shdr, sh_size, bits, shdr));
+
+        print_sect(i+1, fname, name, sect_sz, hash, flags);
     }
 
     free(shdr);
@@ -129,17 +172,28 @@ static void disp_sections(FILE *fp, const char *fname)
 
 int main(int argc, char **argv)
 {
+    int i, flags;
     FILE *fp;
     const char *fname;
 
-    if (argc != 2)
+    flags = FLAG_NONE;
+    fname = NULL;
+
+    for (i=1; i<argc; ++i)
+    {
+        if (strncmp("-c", argv[i], 2) == 0)
+          flags |= FLAG_CSV;
+        else
+          fname = argv[i];
+    }
+
+    if (!fname)
       usage(argv[0]);
-    fname = argv[1];
 
     if (!(fp = fopen(fname, "r")))
       ERR("Could not open file: %s", fname);
 
-    disp_sections(fp, fname);
+    disp_sections(fp, fname, flags);
 
     fclose(fp);
     return 0;
